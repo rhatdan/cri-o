@@ -14,7 +14,9 @@ func main() {
 	app.Version = "0.0.1"
 
 	app.Commands = []cli.Command{
+		imagesCommand,
 		launchCommand,
+		rmiCommand,
 	}
 
 	if err := app.Run(os.Args); err != nil {
