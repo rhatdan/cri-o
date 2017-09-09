@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/kubernetes-incubator/cri-o/cmd/kpod/formats"
-	"github.com/kubernetes-incubator/cri-o/libkpod"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 )
@@ -77,19 +76,14 @@ func diffCmd(c *cli.Context) error {
 	if len(c.Args()) != 1 {
 		return errors.Errorf("container, layer, or image name must be specified: kpod diff [options [...]] ID-NAME")
 	}
-	config, err := getConfig(c)
+	runtime, err := getRuntime(c)
 	if err != nil {
-		return errors.Wrapf(err, "could not get config")
+		return errors.Wrapf(err, "could not get runtime")
 	}
-
-	server, err := libkpod.New(config)
-	if err != nil {
-		return errors.Wrapf(err, "could not get container server")
-	}
-	defer server.Shutdown()
+	defer runtime.Shutdown(false)
 
 	to := c.Args().Get(0)
-	changes, err := server.GetDiff("", to)
+	changes, err := runtime.GetDiff("", to)
 	if err != nil {
 		return errors.Wrapf(err, "could not get changes for %q", to)
 	}
