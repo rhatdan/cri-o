@@ -85,13 +85,9 @@ var (
 )
 
 func historyCmd(c *cli.Context) error {
-	config, err := getConfig(c)
+	runtime, err := getRuntime(c)
 	if err != nil {
 		return errors.Wrapf(err, "Could not get config")
-	}
-	store, err := getStore(config)
-	if err != nil {
-		return err
 	}
 
 	format := genHistoryFormat(c.Bool("quiet"))
@@ -115,7 +111,7 @@ func historyCmd(c *cli.Context) error {
 		quiet:   c.Bool("quiet"),
 		format:  format,
 	}
-	return generateHistoryOutput(store, opts)
+	return generateHistoryOutput(runtime, opts)
 }
 
 func genHistoryFormat(quiet bool) (format string) {
@@ -152,20 +148,14 @@ func (h *historyTemplateParams) headerMap() map[string]string {
 }
 
 // getHistory gets the history of an image and information about its layers
-func getHistory(store storage.Store, image string) ([]v1.History, []types.BlobInfo, string, error) {
-	ref, err := is.Transport.ParseStoreReference(store, image)
-	if err != nil {
-		return nil, nil, "", errors.Wrapf(err, "error parsing reference to image %q", image)
-	}
+func getHistory(runtime libpod.Runtime, image string) ([]v1.History, []types.BlobInfo, string, error) {
 
-	img, err := is.Transport.GetStoreImage(store, ref)
+	img, err := runtime.GetImage(image)
 	if err != nil {
 		return nil, nil, "", errors.Wrapf(err, "no such image %q", image)
 	}
 
-	systemContext := common.GetSystemContext("")
-
-	src, err := ref.NewImage(systemContext)
+	src, err := runtime.GetImageRef(image)
 	if err != nil {
 		return nil, nil, "", errors.Wrapf(err, "error instantiating image %q", image)
 	}
@@ -248,8 +238,8 @@ func getHistoryJSONOutput(history []v1.History, layers []types.BlobInfo, imageID
 }
 
 // generateHistoryOutput generates the history based on the format given
-func generateHistoryOutput(store storage.Store, opts historyOptions) error {
-	history, layers, imageID, err := getHistory(store, opts.image)
+func generateHistoryOutput(runtime libpod.Runtime, opts historyOptions) error {
+	history, layers, imageID, err := getHistory(runtime, opts.image)
 	if err != nil {
 		return errors.Wrapf(err, "error getting history of image %q", opts.image)
 	}

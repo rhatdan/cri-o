@@ -1,9 +1,11 @@
 package libpod
 
 import (
+	"fmt"
 	"io"
 	"strings"
 	"syscall"
+	"time"
 
 	cp "github.com/containers/image/copy"
 	"github.com/containers/image/docker/tarfile"
@@ -16,7 +18,6 @@ import (
 	"github.com/containers/storage/pkg/archive"
 	"github.com/kubernetes-incubator/cri-o/libpod/common"
 	"github.com/kubernetes-incubator/cri-o/libpod/ctr"
-	"github.com/kubernetes-incubator/cri-o/libpod/images"
 	"github.com/pkg/errors"
 )
 
@@ -161,7 +162,7 @@ func (r *Runtime) PushImage(source string, destination string, options CopyOptio
 	if err != nil {
 		return errors.Wrapf(err, "error locating image %q for importing settings", source)
 	}
-	cd, err := images.ImportCopyDataFromImage(r.store, r.imageContext, img.ID, "", "")
+	cd, err := r.ImportCopyDataFromImage(r.imageContext, img.ID, "", "")
 	if err != nil {
 		return err
 	}
@@ -273,4 +274,390 @@ func (r *Runtime) GetImages(filter ...ImageFilter) ([]*storage.Image, error) {
 // ImportImage imports an OCI format image archive into storage as an image
 func (r *Runtime) ImportImage(path string) (*storage.Image, error) {
 	return nil, ctr.ErrNotImplemented
+}
+
+// FilterParams contains the filter options that may be given when outputting images
+type FilterParams struct {
+	dangling         string
+	label            string
+	beforeImage      time.Time
+	sinceImage       time.Time
+	referencePattern string
+}
+
+func matchesFilter(image storage.Image, name string, params *FilterParams) bool {
+	if params == nil {
+		return true
+	}
+
+	info, err := r.getImageInspectInfo(image)
+	if err != nil {
+		return false
+	}
+	if params.dangling != "" && !matchesDangling(name, params.dangling) {
+		return false
+	} else if params.label != "" && !matchesLabel(info, params.label) {
+		return false
+	} else if !params.beforeImage.IsZero() && !matchesBeforeImage(info, name, params) {
+		return false
+	} else if !params.sinceImage.IsZero() && !matchesSinceImage(info, name, params) {
+		return false
+	} else if params.referencePattern != "" && !MatchesReference(name, params.referencePattern) {
+		return false
+	}
+	return true
+}
+
+// GetImagesMatchingFilter returns a slice of all images in the store that match the provided FilterParams.
+// Images with more than one name matching the filter will be in the slice once for each name
+func (r *Runtime) GetImagesMatchingFilter(filter *FilterParams, argName string) ([]storage.Image, error) {
+	images, err := r.store.Images()
+	filteredImages := []storage.Image{}
+	if err != nil {
+		return nil, err
+	}
+	for _, image := range images {
+		names := []string{}
+		if len(image.Names) > 0 {
+			names = image.Names
+		} else {
+			names = append(names, "<none>")
+		}
+		for _, name := range names {
+			if (filter == nil && argName == "") || (filter != nil && matchesFilter(image, name, filter)) || MatchesReference(name, argName) {
+				newImage := image
+				newImage.Names = []string{name}
+				filteredImages = append(filteredImages, newImage)
+			}
+		}
+	}
+	return filteredImages, nil
+}
+
+func (r *Runtime) getImageInspectInfo(image storage.Image) (*types.ImageInspectInfo, error) {
+	storeRef, err := is.Transport.ParseStoreReference(r.store, "@"+image.ID)
+	if err != nil {
+		return nil, err
+	}
+	img, err := storeRef.NewImage(nil)
+	if err != nil {
+		return nil, err
+	}
+	defer img.Close()
+	return img.Inspect()
+}
+
+func matchesDangling(name string, dangling string) bool {
+	if common.IsFalse(dangling) && name != "<none>" {
+		return true
+	} else if common.IsTrue(dangling) && name == "<none>" {
+		return true
+	}
+	return false
+}
+
+func matchesLabel(info *types.ImageInspectInfo, label string) bool {
+	pair := strings.SplitN(label, "=", 2)
+	for key, value := range info.Labels {
+		if key == pair[0] {
+			if len(pair) == 2 {
+				if value == pair[1] {
+					return true
+				}
+			} else {
+				return false
+			}
+		}
+	}
+	return false
+}
+
+// Returns true if the image was created since the filter image.  Returns
+// false otherwise
+func matchesBeforeImage(info *types.ImageInspectInfo, name string, params *FilterParams) bool {
+	return info.Created.Before(params.beforeImage)
+}
+
+// Returns true if the image was created since the filter image.  Returns
+// false otherwise
+func matchesSinceImage(info *types.ImageInspectInfo, name string, params *FilterParams) bool {
+	return info.Created.After(params.sinceImage)
+}
+
+func findImageInSlice(images []storage.Image, ref string) (storage.Image, error) {
+	for _, image := range images {
+		if MatchesID(image.ID, ref) {
+			return image, nil
+		}
+		for _, name := range image.Names {
+			if MatchesReference(name, ref) {
+				return image, nil
+			}
+		}
+	}
+	return storage.Image{}, errors.New("could not find image")
+}
+
+// ParseFilter takes a set of images and a filter string as input, and returns the
+func (r *Runtime) ParseFilter(filter string) (*FilterParams, error) {
+	images, err := r.store.Images()
+	if err != nil {
+		return nil, err
+	}
+	params := new(FilterParams)
+	filterStrings := strings.Split(filter, ",")
+	for _, param := range filterStrings {
+		pair := strings.SplitN(param, "=", 2)
+		switch strings.TrimSpace(pair[0]) {
+		case "dangling":
+			if common.IsValidBool(pair[1]) {
+				params.dangling = pair[1]
+			} else {
+				return nil, fmt.Errorf("invalid filter: '%s=[%s]'", pair[0], pair[1])
+			}
+		case "label":
+			params.label = pair[1]
+		case "before":
+			if img, err := findImageInSlice(images, pair[1]); err == nil {
+				info, err := r.getImageInspectInfo(img)
+				if err != nil {
+					return nil, err
+				}
+				params.beforeImage = info.Created
+			} else {
+				return nil, fmt.Errorf("no such id: %s", pair[0])
+			}
+		case "since":
+			if img, err := findImageInSlice(images, pair[1]); err == nil {
+				info, err := r.getImageInspectInfo(img)
+				if err != nil {
+					return nil, err
+				}
+				params.sinceImage = info.Created
+			} else {
+				return nil, fmt.Errorf("no such id: %s``", pair[0])
+			}
+		case "reference":
+			params.referencePattern = pair[1]
+		default:
+			return nil, fmt.Errorf("invalid filter: '%s'", pair[0])
+		}
+	}
+	return params, nil
+}
+
+// InfoAndDigestAndSize returns the inspection info and size of the image in the given
+// store and the digest of its manifest, if it has one, or "" if it doesn't.
+func (r *Runtime) InfoAndDigestAndSize(img storage.Image) (*types.ImageInspectInfo, digest.Digest, int64, error) {
+	imgRef, err := r.GetImageRef("@" + img.ID)
+	if err != nil {
+		return nil, "", -1, errors.Wrapf(err, "error reading image %q", img.ID)
+	}
+	defer imgRef.Close()
+	return infoAndDigestAndSize(imgRef)
+}
+
+func infoAndDigestAndSize(imgRef types.Image) (*types.ImageInspectInfo, digest.Digest, int64, error) {
+	imgSize, err := imgRef.Size()
+	if err != nil {
+		return nil, "", -1, errors.Wrapf(err, "error reading size of image %q", transports.ImageName(imgRef.Reference()))
+	}
+	manifest, _, err := imgRef.Manifest()
+	if err != nil {
+		return nil, "", -1, errors.Wrapf(err, "error reading manifest for image %q", transports.ImageName(imgRef.Reference()))
+	}
+	manifestDigest := digest.Digest("")
+	if len(manifest) > 0 {
+		manifestDigest = digest.Canonical.FromBytes(manifest)
+	}
+	info, err := imgRef.Inspect()
+	if err != nil {
+		return nil, "", -1, errors.Wrapf(err, "error inspecting image %q", transports.ImageName(imgRef.Reference()))
+	}
+	return info, manifestDigest, imgSize, nil
+}
+
+// MatchesID returns true if argID is a full or partial match for id
+func MatchesID(id, argID string) bool {
+	return strings.HasPrefix(argID, id)
+}
+
+// MatchesReference returns true if argName is a full or partial match for name
+// Partial matches will register only if they match the most specific part of the name available
+// For example, take the image docker.io/library/redis:latest
+// redis, library,redis, docker.io/library/redis, redis:latest, etc. will match
+// But redis:alpine, ry/redis, library, and io/library/redis will not
+func MatchesReference(name, argName string) bool {
+	if argName == "" {
+		return false
+	}
+	splitName := strings.Split(name, ":")
+	// If the arg contains a tag, we handle it differently than if it does not
+	if strings.Contains(argName, ":") {
+		splitArg := strings.Split(argName, ":")
+		return strings.HasSuffix(splitName[0], splitArg[0]) && (splitName[1] == splitArg[1])
+	}
+	return strings.HasSuffix(splitName[0], argName)
+}
+
+// FormattedSize returns a human-readable formatted size for the image
+func FormattedSize(size float64) string {
+	suffixes := [5]string{"B", "KB", "MB", "GB", "TB"}
+
+	count := 0
+	for size >= 1024 && count < 4 {
+		size /= 1024
+		count++
+	}
+	return fmt.Sprintf("%.4g %s", size, suffixes[count])
+}
+
+// Data handles the data used when inspecting a container
+// nolint
+type Data struct {
+	ID           string
+	Tags         []string
+	Digests      []string
+	Digest       digest.Digest
+	Comment      string
+	Created      *time.Time
+	Container    string
+	Author       string
+	Config       ociv1.ImageConfig
+	Architecture string
+	OS           string
+	Annotations  map[string]string
+	CreatedBy    string
+	Size         uint
+	VirtualSize  uint
+	GraphDriver  driver.Data
+	RootFS       ociv1.RootFS
+}
+
+// ParseImageNames parses the names we've stored with an image into a list of
+// tagged references and a list of references which contain digests.
+func ParseImageNames(names []string) (tags, digests []string, err error) {
+	for _, name := range names {
+		if named, err := reference.ParseNamed(name); err == nil {
+			if digested, ok := named.(reference.Digested); ok {
+				canonical, err := reference.WithDigest(named, digested.Digest())
+				if err == nil {
+					digests = append(digests, canonical.String())
+				}
+			} else {
+				if reference.IsNameOnly(named) {
+					named = reference.TagNameOnly(named)
+				}
+				if tagged, ok := named.(reference.Tagged); ok {
+					namedTagged, err := reference.WithTag(named, tagged.Tag())
+					if err == nil {
+						tags = append(tags, namedTagged.String())
+					}
+				}
+			}
+		}
+	}
+	return tags, digests, nil
+}
+
+func annotations(manifest []byte, manifestType string) map[string]string {
+	annotations := make(map[string]string)
+	switch manifestType {
+	case ociv1.MediaTypeImageManifest:
+		var m ociv1.Manifest
+		if err := json.Unmarshal(manifest, &m); err == nil {
+			for k, v := range m.Annotations {
+				annotations[k] = v
+			}
+		}
+	}
+	return annotations
+}
+
+// GetData gets the Data for a container with the given name in the given store.
+func (r *Runtime) GetData(name string) (*Data, error) {
+	img, err := r.GetImage(name)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error reading image %q", name)
+	}
+
+	imgRef, err := r.GetImageRef("@" + img.ID)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error reading image %q", img.ID)
+	}
+	defer imgRef.Close()
+
+	tags, digests, err := ParseImageNames(img.Names)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error parsing image names for %q", name)
+	}
+
+	driverName, err := driver.GetDriverName(r.store)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error reading name of storage driver")
+	}
+
+	topLayerID := img.TopLayer
+
+	driverMetadata, err := driver.GetDriverMetadata(r.store, topLayerID)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error asking storage driver %q for metadata", driverName)
+	}
+
+	layer, err := r.store.Layer(topLayerID)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error reading information about layer %q", topLayerID)
+	}
+	size, err := r.store.DiffSize(layer.Parent, layer.ID)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error determining size of layer %q", layer.ID)
+	}
+
+	imgSize, err := imgRef.Size()
+	if err != nil {
+		return nil, errors.Wrapf(err, "error determining size of image %q", transports.ImageName(imgRef.Reference()))
+	}
+
+	manifest, manifestType, err := imgRef.Manifest()
+	if err != nil {
+		return nil, errors.Wrapf(err, "error reading manifest for image %q", img.ID)
+	}
+	manifestDigest := digest.Digest("")
+	if len(manifest) > 0 {
+		manifestDigest = digest.Canonical.FromBytes(manifest)
+	}
+	annotations := annotations(manifest, manifestType)
+
+	config, err := imgRef.OCIConfig()
+	if err != nil {
+		return nil, errors.Wrapf(err, "error reading image configuration for %q", img.ID)
+	}
+	historyComment := ""
+	historyCreatedBy := ""
+	if len(config.History) > 0 {
+		historyComment = config.History[len(config.History)-1].Comment
+		historyCreatedBy = config.History[len(config.History)-1].CreatedBy
+	}
+
+	return &Data{
+		ID:           img.ID,
+		Tags:         tags,
+		Digests:      digests,
+		Digest:       manifestDigest,
+		Comment:      historyComment,
+		Created:      config.Created,
+		Author:       config.Author,
+		Config:       config.Config,
+		Architecture: config.Architecture,
+		OS:           config.OS,
+		Annotations:  annotations,
+		CreatedBy:    historyCreatedBy,
+		Size:         uint(size),
+		VirtualSize:  uint(size + imgSize),
+		GraphDriver: driver.Data{
+			Name: driverName,
+			Data: driverMetadata,
+		},
+		RootFS: config.RootFS,
+	}, nil
 }

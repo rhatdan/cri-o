@@ -212,3 +212,13 @@ func (r *Runtime) LookupPod(idOrName string) (*pod.Pod, error) {
 func (r *Runtime) GetPods(filters ...PodFilter) ([]*pod.Pod, error) {
 	return nil, ctr.ErrNotImplemented
 }
+
+// Mounts a container image, and returns the mountpoint
+func (r *Runtime) Mount(container string, options string) (string, error) {
+	return r.store.Mount(opts.container, options)
+}
+
+// Unmount a container image
+func (r *Runtime) Unmount(container string) (string, error) {
+	return r.store.Unmount(opts.container)
+}

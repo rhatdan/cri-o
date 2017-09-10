@@ -10,7 +10,6 @@ import (
 
 	tm "github.com/buger/goterm"
 	"github.com/kubernetes-incubator/cri-o/libkpod"
-	"github.com/kubernetes-incubator/cri-o/libpod/images"
 	"github.com/kubernetes-incubator/cri-o/oci"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
@@ -62,16 +61,12 @@ var (
 )
 
 func statsCmd(c *cli.Context) error {
-	config, err := getConfig(c)
+	runtime, err := getRuntime(c)
 	if err != nil {
 		return errors.Wrapf(err, "could not read config")
 	}
-	containerServer, err := libkpod.New(config)
-	if err != nil {
-		return errors.Wrapf(err, "could not create container server")
-	}
-	defer containerServer.Shutdown()
-	err = containerServer.Update()
+	defer runtime.Shutdown()
+	err = runtime.Update()
 	if err != nil {
 		return errors.Wrapf(err, "could not update list of containers")
 	}
@@ -94,17 +89,17 @@ func statsCmd(c *cli.Context) error {
 			time.Sleep(time.Second)
 		}
 	}()
-	return getStats(containerServer, c.Args(), c.Bool("all"), statsChan, times)
+	return getStats(runtime, c.Args(), c.Bool("all"), statsChan, times)
 }
 
-func getStats(server *libkpod.ContainerServer, args []string, all bool, statsChan chan []*libkpod.ContainerStats, times int) error {
-	ctrs, err := server.ListContainers(isRunning, ctrInList(args))
+func getStats(runtime *libpod.Runtime, args []string, all bool, statsChan chan []*libkpod.ContainerStats, times int) error {
+	ctrs, err := runtime.ListContainers(isRunning, ctrInList(args))
 	if err != nil {
 		return err
 	}
 	containerStats := map[string]*libkpod.ContainerStats{}
 	for _, ctr := range ctrs {
-		initialStats, err := server.GetContainerStats(ctr, &libkpod.ContainerStats{})
+		initialStats, err := runtime.GetContainerStats(ctr, &libpod.ContainerStats{})
 		if err != nil {
 			return err
 		}
@@ -120,13 +115,13 @@ func getStats(server *libkpod.ContainerServer, args []string, all bool, statsCha
 		for _, ctr := range ctrs {
 			id := ctr.ID()
 			if _, ok := containerStats[ctr.ID()]; !ok {
-				initialStats, err := server.GetContainerStats(ctr, &libkpod.ContainerStats{})
+				initialStats, err := runtime.GetContainerStats(ctr, &libkpod.ContainerStats{})
 				if err != nil {
 					return err
 				}
 				containerStats[id] = initialStats
 			}
-			stats, err := server.GetContainerStats(ctr, containerStats[id])
+			stats, err := runtime.GetContainerStats(ctr, containerStats[id])
 			if err != nil {
 				return err
 			}
@@ -136,11 +131,11 @@ func getStats(server *libkpod.ContainerServer, args []string, all bool, statsCha
 		}
 		statsChan <- reportStats
 
-		err := server.Update()
+		err := runtime.Update()
 		if err != nil {
 			return err
 		}
-		ctrs, err = server.ListContainers(isRunning, ctrInList(args))
+		ctrs, err = runtime.ListContainers(isRunning, ctrInList(args))
 		if err != nil {
 			return err
 		}
@@ -179,7 +174,7 @@ func outputStatsUsingFormatString(stats *libkpod.ContainerStats) {
 }
 
 func combineHumanValues(a, b uint64) string {
-	return fmt.Sprintf("%s / %s", images.FormattedSize(float64(a)), images.FormattedSize(float64(b)))
+	return fmt.Sprintf("%s / %s", libpod.FormattedSize(float64(a)), libpod.FormattedSize(float64(b)))
 }
 
 func floatToPercentString(f float64) string {

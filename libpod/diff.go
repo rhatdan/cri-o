@@ -2,7 +2,7 @@ package libpod
 
 import (
 	"github.com/containers/storage/pkg/archive"
-	"github.com/kubernetes-incubator/cri-o/libpod/images"
+	"github.com/kubernetes-incubator/cri-o/libpod"
 	"github.com/kubernetes-incubator/cri-o/libpod/layers"
 	"github.com/pkg/errors"
 )
@@ -28,7 +28,7 @@ func (r *Runtime) GetDiff(from, to string) ([]archive.Change, error) {
 // If the id matches a layer, the top layer id is returned
 func (r *Runtime) getLayerID(id string) (string, error) {
 	var toLayer string
-	toImage, err := images.FindImage(r.store, id)
+	toImage, err := r.GetImage(id)
 	if err != nil {
 		toCtr, err := r.store.Container(id)
 		if err != nil {

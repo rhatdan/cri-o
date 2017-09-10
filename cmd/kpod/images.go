@@ -6,7 +6,7 @@ import (
 
 	"github.com/containers/storage"
 	"github.com/kubernetes-incubator/cri-o/cmd/kpod/formats"
-	libpod "github.com/kubernetes-incubator/cri-o/libpod/images"
+	"github.com/kubernetes-incubator/cri-o/libpod"
 	digest "github.com/opencontainers/go-digest"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
@@ -52,31 +52,16 @@ var (
 )
 
 func imagesCmd(c *cli.Context) error {
-	config, err := getConfig(c)
+	runtime, err := getRuntime(c)
 	if err != nil {
-		return errors.Wrapf(err, "Could not get config")
-	}
-	store, err := getStore(config)
-	if err != nil {
-		return err
+		return errors.Wrapf(err, "Could not get runtime")
 	}
 
-	quiet := false
-	if c.IsSet("quiet") {
-		quiet = c.Bool("quiet")
-	}
-	noheading := false
-	if c.IsSet("noheading") {
-		noheading = c.Bool("noheading")
-	}
-	truncate := true
-	if c.IsSet("no-trunc") {
-		truncate = !c.Bool("no-trunc")
-	}
-	digests := false
-	if c.IsSet("digests") {
-		digests = c.Bool("digests")
-	}
+	quiet := c.Bool("quiet")
+	noheading := c.Bool("noheading")
+	truncate := !c.Bool("no-trunc")
+	digests := c.Bool("digests")
+
 	outputFormat := genImagesFormat(quiet, truncate, digests)
 	if c.IsSet("format") {
 		outputFormat = c.String("format")
@@ -91,7 +76,7 @@ func imagesCmd(c *cli.Context) error {
 
 	var params *libpod.FilterParams
 	if c.IsSet("filter") {
-		params, err = libpod.ParseFilter(store, c.String("filter"))
+		params, err = runtime.ParseFilter(c.String("filter"))
 		if err != nil {
 			return errors.Wrapf(err, "error parsing filter")
 		}
@@ -99,12 +84,12 @@ func imagesCmd(c *cli.Context) error {
 		params = nil
 	}
 
-	imageList, err := libpod.GetImagesMatchingFilter(store, params, name)
+	imageList, err := runtime.GetImagesMatchingFilter(params, name)
 	if err != nil {
 		return errors.Wrapf(err, "could not get list of images matching filter")
 	}
 
-	return outputImages(store, imageList, truncate, digests, quiet, outputFormat, noheading)
+	return outputImages(runtime, imageList, truncate, digests, quiet, outputFormat, noheading)
 }
 
 func genImagesFormat(quiet, truncate, digests bool) (format string) {
@@ -126,7 +111,7 @@ func genImagesFormat(quiet, truncate, digests bool) (format string) {
 	return
 }
 
-func outputImages(store storage.Store, images []storage.Image, truncate, digests, quiet bool, outputFormat string, noheading bool) error {
+func outputImages(runtime libpodRuntime, images []storage.Image, truncate, digests, quiet bool, outputFormat string, noheading bool) error {
 	imageOutput := []imageOutputParams{}
 
 	lastID := ""
@@ -141,7 +126,7 @@ func outputImages(store storage.Store, images []storage.Image, truncate, digests
 			names = img.Names
 		}
 
-		info, imageDigest, size, _ := libpod.InfoAndDigestAndSize(store, img)
+		info, imageDigest, size, _ := runtime.InfoAndDigestAndSize(img)
 		if info != nil {
 			createdTime = info.Created
 		}

@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/containers/storage"
-	"github.com/kubernetes-incubator/cri-o/libpod/images"
+	"github.com/kubernetes-incubator/cri-o/libpod"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 )
@@ -49,7 +49,7 @@ func rmiCmd(c *cli.Context) error {
 	}
 
 	for _, id := range args {
-		image, err := images.FindImage(store, id)
+		image, err := runtime.GetImage(id)
 		if err != nil {
 			return errors.Wrapf(err, "could not get image %q", id)
 		}
@@ -68,14 +68,14 @@ func rmiCmd(c *cli.Context) error {
 				}
 			}
 			// If the user supplied an ID, we cannot delete the image if it is referred to by multiple tags
-			if images.MatchesID(image.ID, id) {
+			if libpod.MatchesID(image.ID, id) {
 				if len(image.Names) > 1 && !force {
 					return fmt.Errorf("unable to delete %s (must force) - image is referred to in multiple tags", image.ID)
 				}
 				// If it is forced, we have to untag the image so that it can be deleted
 				image.Names = image.Names[:0]
 			} else {
-				name, err2 := images.UntagImage(store, image, id)
+				name, err2 := runtime.UntagImage(image, id)
 				if err2 != nil {
 					return err
 				}
@@ -85,7 +85,7 @@ func rmiCmd(c *cli.Context) error {
 			if len(image.Names) > 0 {
 				continue
 			}
-			id, err := images.RemoveImage(image, store)
+			id, err := runtime.RemoveImage(image)
 			if err != nil {
 				return err
 			}

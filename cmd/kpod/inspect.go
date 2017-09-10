@@ -2,8 +2,7 @@ package main
 
 import (
 	"github.com/kubernetes-incubator/cri-o/cmd/kpod/formats"
-	"github.com/kubernetes-incubator/cri-o/libkpod"
-	"github.com/kubernetes-incubator/cri-o/libpod/images"
+	"github.com/kubernetes-incubator/cri-o/libpod"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 )
@@ -63,16 +62,12 @@ func inspectCmd(c *cli.Context) error {
 
 	name := args[0]
 
-	config, err := getConfig(c)
+	runtime, err := getRuntime(c)
 	if err != nil {
-		return errors.Wrapf(err, "Could not get config")
+		return errors.Wrapf(err, "Could not get runtime")
 	}
-	server, err := libkpod.New(config)
-	if err != nil {
-		return errors.Wrapf(err, "could not get container server")
-	}
-	defer server.Shutdown()
-	if err = server.Update(); err != nil {
+	defer runtime.Shutdown()
+	if err = runtime.Update(); err != nil {
 		return errors.Wrapf(err, "could not update list of containers")
 	}
 
@@ -80,19 +75,19 @@ func inspectCmd(c *cli.Context) error {
 	var data interface{}
 	switch itemType {
 	case inspectTypeContainer:
-		data, err = server.GetContainerData(name, size)
+		data, err = runtime.GetContainerData(name, size)
 		if err != nil {
 			return errors.Wrapf(err, "error parsing container data")
 		}
 	case inspectTypeImage:
-		data, err = images.GetData(server.Store(), name)
+		data, err = runtime.GetData(name)
 		if err != nil {
 			return errors.Wrapf(err, "error parsing image data")
 		}
 	case inspectAll:
-		ctrData, err := server.GetContainerData(name, size)
+		ctrData, err := runtime.GetContainerData(name, size)
 		if err != nil {
-			imgData, err := images.GetData(server.Store(), name)
+			imgData, err := runtime.GetData(name)
 			if err != nil {
 				return errors.Wrapf(err, "error parsing container or image data")
 			}

@@ -1,4 +1,4 @@
-package images
+package libpod
 
 import (
 	"encoding/json"
@@ -380,11 +380,11 @@ func GetContainerCopyData(store storage.Store, name string) (*CopyData, error) {
 }
 
 // GetImageCopyData gets the copy data for an image
-func GetImageCopyData(store storage.Store, image string) (*CopyData, error) {
+func (r *Runtime) GetImageCopyData(image string) (*CopyData, error) {
 	if image == "" {
 		return nil, errors.Errorf("image name must be specified")
 	}
-	img, err := FindImage(store, image)
+	img, err := r.GetImage(image)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error locating image %q for importing settings", image)
 	}

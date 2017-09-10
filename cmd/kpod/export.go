@@ -49,13 +49,9 @@ func exportCmd(c *cli.Context) error {
 	}
 	container := args[0]
 
-	config, err := getConfig(c)
+	runtime, err := getRuntime(c)
 	if err != nil {
-		return errors.Wrapf(err, "could not get config")
-	}
-	store, err := getStore(config)
-	if err != nil {
-		return err
+		return errors.Wrapf(err, "could not get runtime")
 	}
 
 	output := c.String("output")
@@ -71,18 +67,18 @@ func exportCmd(c *cli.Context) error {
 		container: container,
 	}
 
-	return exportContainer(store, opts)
+	return exportContainer(runtime, opts)
 }
 
 // exportContainer exports the contents of a container and saves it as
 // a tarball on disk
-func exportContainer(store storage.Store, opts exportOptions) error {
-	mountPoint, err := store.Mount(opts.container, "")
+func exportContainer(runtime libpod.Runtime, opts exportOptions) error {
+	mountPoint, err := runtime.Mount(opts.container, "")
 	if err != nil {
-		return errors.Wrapf(err, "error finding container %q", opts.container)
+		return errors.Wrapf(err, "error mounting container %q", opts.container)
 	}
 	defer func() {
-		if err := store.Unmount(opts.container); err != nil {
+		if err := runtime.Unmount(opts.container); err != nil {
 			fmt.Printf("error unmounting container %q: %v\n", opts.container, err)
 		}
 	}()
