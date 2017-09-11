@@ -1,18 +1,12 @@
 package libkpod
 
 import (
-	"encoding/json"
-	"os"
-
 	"k8s.io/apimachinery/pkg/fields"
 	pb "k8s.io/kubernetes/pkg/kubelet/apis/cri/v1alpha1/runtime"
 
-	"github.com/kubernetes-incubator/cri-o/libpod"
-	"github.com/kubernetes-incubator/cri-o/libpod/driver"
 	"github.com/kubernetes-incubator/cri-o/oci"
 	"github.com/opencontainers/image-spec/specs-go/v1"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/pkg/errors"
 )
 
 // ContainerData handles the data used when inspecting a container
