@@ -273,6 +273,17 @@ func setupContainerUser(specgen *generate.Generator, rootfs, mountLabel, ctrRunD
 		return fmt.Errorf("user group is specified without user or username")
 	}
 	imageUser := ""
+	homedir := ""
+	for _, env := range specgen.Config.Process.Env {
+		if strings.HasPrefix(env, "HOME=") {
+			homedir = strings.TrimPrefix(env, "HOME=")
+			break
+		}
+	}
+	if homedir == "" {
+		homedir = specgen.Config.Process.Cwd
+	}
+
 	if imageConfig != nil {
 		imageUser = imageConfig.Config.User
 	}
@@ -290,7 +301,7 @@ func setupContainerUser(specgen *generate.Generator, rootfs, mountLabel, ctrRunD
 	}
 
 	// verify uid exists in containers /etc/passwd, else generate a passwd with the user entry
-	passwdPath, err := utils.GeneratePasswd(uid, gid, rootfs, ctrRunDir)
+	passwdPath, err := utils.GeneratePasswd(containerUser, uid, gid, homedir, rootfs, ctrRunDir)
 	if err != nil {
 		return err
 	}

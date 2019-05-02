@@ -244,7 +244,7 @@ func GetUserInfo(rootfs string, userName string) (uint32, uint32, []uint32, erro
 
 // GeneratePasswd generates a container specific passwd file,
 // iff uid is not defined in the containers /etc/passwd
-func GeneratePasswd(uid, gid uint32, rootfs, rundir string) (string, error) {
+func GeneratePasswd(username string, uid, gid uint32, homedir, rootfs, rundir string) (string, error) {
 	// if UID exists inside of container rootfs /etc/passwd then
 	// don't generate passwd
 	if _, err := lookup.GetUser(rootfs, strconv.Itoa(int(uid))); err == nil {
@@ -263,8 +263,13 @@ func GeneratePasswd(uid, gid uint32, rootfs, rundir string) (string, error) {
 		}
 		return "", errors.Wrapf(err, "unable to read passwd file %s", originPasswdFile)
 	}
-
-	pwd := fmt.Sprintf("%s%d:x:%d:%d:container user:%s:/bin/sh\n", orig, uid, uid, gid, "/")
+	if username == "" {
+		username = fmt.Sprintf("%d", uid)
+	}
+	if homedir == "" {
+		homedir = "/tmp"
+	}
+	pwd := fmt.Sprintf("%s%s:x:%d:%d:container user:%s:/bin/sh\n", orig, username, uid, gid, homedir)
 	if err := ioutil.WriteFile(passwdFile, []byte(pwd), 0644); err != nil {
 		return "", errors.Wrapf(err, "failed to create temporary passwd file")
 	}
